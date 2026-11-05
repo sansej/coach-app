@@ -98,9 +98,21 @@ button.b.on{outline:2px solid var(--lime);outline-offset:2px}
 .cell.today{outline:2px solid var(--lime);outline-offset:-2px;background:#f7ffdf}
 .cell.e{background:transparent;border-color:transparent;box-shadow:none;cursor:default}
 .chip{
-  display:block;color:#171812;border-radius:999px;padding:3px 5px;margin-top:4px;
-  font-size:10px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  box-shadow:0 2px 5px rgba(0,0,0,.08);
+  display:block;
+  background:#edf1dc;
+  background:color-mix(in srgb,var(--coach-color,#c8ff00) 30%,white);
+  color:#34362f;
+  border:1px solid color-mix(in srgb,var(--coach-color,#c8ff00) 42%,white);
+  border-radius:7px;
+  padding:4px 5px;
+  margin-top:4px;
+  font-size:10px;
+  font-weight:400;
+  line-height:1.25;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  box-shadow:none;
 }
 .chip.x{text-decoration:line-through;opacity:.65}
 .dot{
@@ -188,7 +200,7 @@ function brandHeader() {
     h('div', { class: 'brand-mark' }, 'DS'),
     h('div', {},
       h('div', { class: 'brand-title' }, 'DAILY SPORT CLUB'),
-      h('div', { class: 'brand-sub' }, 'ТРЕНИРОВКИ · СОБЫТИЯ · КОМАНДА')
+      h('div', { class: 'brand-sub' }, 'ТВОЙ РИТМ. ТВОЯ КОМАНДА.')
     )
   );
 }
@@ -209,8 +221,12 @@ async function calendar() {
     const date = ST.ym + '-' + p2(n), info = d.days[date];
     cells.push(h('div', { class: 'cell' + (date === ST.today ? ' today' : ''), onclick: () => go(() => dayScreen(date)) },
       n + (info && info.plan ? ' 📄' : ''),
-      info ? info.ids.map(id => h('span', { class: 'chip' + (info.cancelled ? ' x' : ''), style: 'background:' + coach(id).color },
-        (info.hosted.indexOf(id) >= 0 ? '✓ ' : '') + coach(id).name)) : null));
+      info ? info.ids.map(id => h('span', {
+  class: 'chip' + (info.cancelled ? ' x' : ''),
+  style: '--coach-color:' + coach(id).color
+},
+  (info.hosted.indexOf(id) >= 0 ? '✓ ' : '') + coach(id).name
+)) : null));
   }
   return withTabs(monthHeader(() => render()), h('div', { class: 'grid' }, cells));
 }
