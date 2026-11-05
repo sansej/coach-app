@@ -152,7 +152,7 @@ tr:last-child td{border-bottom:0}
 
 </style></head><body><div id="app"></div>
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbyfzJ0-sl6v1zuicVOS60hIKOpeItTAlC08HpVHEWj4C-90bzbJQFfF-LGA4oUJ5mzt/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbw3oIB47wzrUf9X_j2_OBEBO5JM60jD_5aJlyI8Mcgpv9eOWgSY9QS-A32Abp6X998H/exec';
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
 const app = document.getElementById('app');
 const ST = { user: null, coaches: [], today: '', ym: '', tab: 'cal', stack: [] };
@@ -179,7 +179,7 @@ const toast = m => tg.showAlert ? tg.showAlert(m) : alert(m);
 
 function go(fn) { ST.stack.push(fn); render(); }
 function back() { if (ST.stack.length > 1) { ST.stack.pop(); render(); } }
-function setTab(t) { ST.tab = t; ST.stack = [SCREENS[t]]; render(); }
+function setTab(t) { guard(() => { AV = null; ST.tab = t; ST.stack = [SCREENS[t]]; render(); }); }
 function render() {
   const fn = ST.stack[ST.stack.length - 1];
   app.replaceChildren(h('div', { class: 'loading' }, 'Загрузка…'));
@@ -259,9 +259,27 @@ function hostedBox(date, id, val) {
 }
 
 /* ---------- список и карточка ---------- */
+/* ---------- копирование списка (для всех ролей) ---------- */
+function copyBlock(title, items) {
+  const text = title + ' · ' + items.length + '\n' + items.map((p, i) => (i + 1) + '. ' + (p.surname + ' ' + p.name).trim()).join('\n');
+  const area = h('textarea', { readOnly: true, value: text, style: 'min-height:160px' });
+  const fb = h('div', { style: 'display:none;margin-top:8px' }, h('div', { class: 'hint' }, 'Автоматически скопировать не вышло: выделите текст ниже и скопируйте его.'), area);
+  const b = btn('📋 Копировать список', async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; }
+    catch (e) {
+      try { const t = h('textarea', { value: text, style: 'position:fixed;top:0;left:0;opacity:0;min-height:0' }); document.body.append(t); t.focus(); t.select(); ok = document.execCommand('copy'); t.remove(); } catch (e2) {}
+    }
+    if (ok) { fb.style.display = 'none'; b.textContent = '✓ Скопировано'; setTimeout(() => { b.textContent = '📋 Копировать список'; }, 1500); }
+    else { fb.style.display = 'block'; area.focus(); area.select(); }
+  }, 's');
+  return h('div', { class: 'pad' }, b, fb);
+}
+
 async function listScreen(o) {
   const d = await call('list', { type: o.type, date: o.date, iid: o.iid });
   const out = [h('div', { class: 'pad' }, h('h2', {}, o.title), h('div', { class: 'hint' }, 'Участников: ' + d.items.length + (d.cancelled ? ' · тренировка отменена' : '')))];
+  if (d.items.length) out.push(copyBlock(o.title, d.items));
   d.items.forEach((p, i) => out.push(h('div', { class: 'row' },
     h('span', { class: 'hint', style: 'width:26px' }, i + 1),
     h('span', { class: 'grow click', onclick: () => go(() => cardScreen(p.pid)) }, (p.surname + ' ' + p.name).trim()),
@@ -304,22 +322,71 @@ async function eventsScreen() {
 }
 
 /* ---------- доступность ---------- */
-async function availScreen() {
-  const d = await call('availGet', { ym: ST.ym }), out = [monthHeader(() => render())];
+// Изменения копятся в AV.draft и уходят на сервер только по кнопке «Сохранить».
+let AV = null;   // { ym, data, draft: { coachId: { 'YYYY-MM-DD': 'can' | 'cannot' } } }
+function avCount() { return AV ? Object.keys(AV.draft).reduce((n, c) => n + Object.keys(AV.draft[c]).length, 0) : 0; }
+// Если есть несохранённые изменения, спрашиваем перед уходом с вкладки или месяца.
+function guard(next) {
+  if (!avCount()) return next();
+  const msg = 'Есть несохранённые изменения доступности. Уйти без сохранения?';
+  if (tg.showConfirm) tg.showConfirm(msg, ok => { if (ok) next(); });
+  else if (confirm(msg)) next();
+}
+function avSet(coachId, dates, status) {
+  const c = AV.data.coaches.find(x => x.id === coachId);
+  const m = AV.draft[coachId] || (AV.draft[coachId] = {});
+  dates.forEach(date => {
+    const base = c.pending[date] || c.status[date];   // что сейчас на сервере (с учётом ожидающих утверждения)
+    if (base === status) delete m[date]; else m[date] = status;
+  });
+  if (!Object.keys(m).length) delete AV.draft[coachId];
+  paintAvail();
+}
+function paintAvail() { app.replaceChildren(...buildAvail(AV.data)); }
+function availMonth(n) { guard(() => { AV = null; ST.ym = shiftYm(ST.ym, n); render(); }); }
+
+function buildAvail(d) {
+  const [y, m] = ST.ym.split('-').map(Number), out = [];
+  out.push(h('div', { class: 'mh' }, h('button', { onclick: () => availMonth(-1) }, '‹'),
+    h('b', {}, MONTHS[m - 1] + ' ' + y), h('button', { onclick: () => availMonth(1) }, '›')));
   d.coaches.forEach(c => {
-    out.push(h('h3', { class: 'pad' }, c.name + ' · ответов ' + c.answered + '/' + c.total));
+    const mine = AV.draft[c.id] || {}, n = Object.keys(mine).length;
+    out.push(h('h3', { class: 'pad' }, c.name + ' · ответов ' + c.answered + '/' + c.total + (n ? ' · не сохранено: ' + n : '')));
     d.dates.forEach(x => {
-      const set = async s => { try { await call('availSet', { coachId: c.id, items: [{ date: x.date, status: s }] }); render(); } catch (e) { toast(e.message); } };
-      const cur = c.status[x.date], pend = c.pending[x.date];
+      const cur = c.status[x.date], pend = c.pending[x.date], eff = mine[x.date] || pend || cur;
       out.push(h('div', { class: 'row' }, h('span', { class: 'grow' }, DOW[dowOf(x.date)] + ' ' + dmy(x.date) + (x.published ? ' 🔒' : '')),
         x.past ? h('span', { class: 'hint' }, cur === 'can' ? 'мог' : cur === 'cannot' ? 'не мог' : '—') : [
-          btn('Могу', () => set('can'), 's' + ((pend || cur) === 'can' ? ' on' : '')), btn('Не могу', () => set('cannot'), 's' + ((pend || cur) === 'cannot' ? ' on' : ''))],
+          btn('Могу', () => avSet(c.id, [x.date], 'can'), 's' + (eff === 'can' ? ' on' : '')),
+          btn('Не могу', () => avSet(c.id, [x.date], 'cannot'), 's' + (eff === 'cannot' ? ' on' : ''))],
         pend ? h('span', { class: 'hint' }, '⏳') : null));
     });
-    out.push(h('div', { class: 'pad' }, btn('Могу все даты месяца', async () => { try { await call('availSet', { coachId: c.id, items: d.dates.map(x => ({ date: x.date, status: 'can' })) }); render(); } catch (e) { toast(e.message); } }, 's')));
+    const open = d.dates.filter(x => !x.past).map(x => x.date);   // прошедшие даты не меняем
+    out.push(h('div', { class: 'pad', style: 'display:flex;gap:8px;flex-wrap:wrap' },
+      btn('Могу весь месяц', () => avSet(c.id, open, 'can'), 's'),
+      btn('Не могу весь месяц', () => avSet(c.id, open, 'cannot'), 's')));
   });
   out.push(h('div', { class: 'pad hint' }, '🔒 — график месяца уже опубликован, изменение уйдёт администратору на утверждение (⏳).'));
+  out.push(h('div', { style: 'height:72px' }));   // место под панель «Сохранить»
+  const n = avCount();
+  out.push(h('div', { style: 'position:fixed;left:0;right:0;bottom:0;max-width:760px;margin:0 auto;background:rgba(247,248,244,.96);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:10px;z-index:6' },
+    h('span', { class: 'hint grow' }, n ? 'Не сохранено изменений: ' + n : 'Изменений нет'),
+    h('button', { class: 'b', disabled: !n, style: n ? '' : 'opacity:.5', onclick: saveAvail }, 'Сохранить')));
   return withTabs(...out);
+}
+
+async function saveAvail() {
+  const jobs = Object.keys(AV.draft).map(coachId => call('availSet', { coachId, items:
+    Object.keys(AV.draft[coachId]).map(date => ({ date, status: AV.draft[coachId][date] })) }));
+  if (!jobs.length) return;
+  app.replaceChildren(h('div', { class: 'loading' }, 'Сохранение…'));
+  try { await Promise.all(jobs); AV = null; render(); toast('Сохранено'); }
+  catch (e) { toast('Не всё сохранилось: ' + e.message + '. Нажмите «Сохранить» ещё раз.'); paintAvail(); }
+}
+
+async function availScreen() {
+  if (!AV || AV.ym !== ST.ym) AV = { ym: ST.ym, data: null, draft: {} };
+  if (!AV.data) AV.data = await call('availGet', { ym: ST.ym });
+  return buildAvail(AV.data);
 }
 
 /* ---------- график (админ) ---------- */
@@ -332,7 +399,7 @@ async function schedScreen() {
   out.push(h('div', { class: 'pad', style: 'display:flex;gap:8px;flex-wrap:wrap' }, btn('Сгенерировать', () => run('draftGenerate')), btn('Из опубликованного', () => run('draftFromPublished'), 's'), btn('Опубликовать', () => run('publish'))));
   if (!d.exists) out.push(h('div', { class: 'pad hint' }, 'Проекта на этот месяц нет.'));
   d.dates.forEach(x => out.push(h('div', { class: 'row click', onclick: () => go(() => editDraft(x)) }, h('span', { class: 'grow' }, DOW[dowOf(x.date)] + ' ' + dmy(x.date)),
-    x.cancelled ? h('span', { class: 'hint' }, 'отмена') : x.ids.map(id => h('span', { class: 'chip', style: 'background:' + coach(id).color }, coach(id).name)))));
+    x.cancelled ? h('span', { class: 'hint' }, 'отмена') : x.ids.map(id => h('span', { class: 'chip', style: '--coach-color:' + coach(id).color + ';margin:0' }, coach(id).name)))));
   out.push(h('div', { class: 'pad hint' }, 'Нагрузка в проекте: ' + ST.coaches.map(c => c.name + ' ' + (d.load[c.id] || 0)).join(' · ')));
   return withTabs(...out);
 }
