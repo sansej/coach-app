@@ -148,7 +148,7 @@ tr:last-child td{border-bottom:0}
 
 </style><meta name="theme-color" content="#373737"></head><body><div id="app"></div>
 <script>
-const API_URL = 'https://script.google.com/macros/s/AKfycbw3oIB47wzrUf9X_j2_OBEBO5JM60jD_5aJlyI8Mcgpv9eOWgSY9QS-A32Abp6X998H/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyfzJ0-sl6v1zuicVOS60hIKOpeItTAlC08HpVHEWj4C-90bzbJQFfF-LGA4oUJ5mzt/exec';
 const tg = window.Telegram.WebApp; tg.ready(); tg.expand();
 try { tg.setHeaderColor('#373737'); tg.setBackgroundColor('#1e1e1e'); } catch (e) {}
 const app = document.getElementById('app');
@@ -187,9 +187,10 @@ function render() {
 tg.BackButton.onClick(back);
 
 function tabs() {
-  const t = [['cal', 'Календарь'], ['event', 'Event']];
-  if (isRun() || isAdmin()) t.splice(1, 0, ['avail', 'Доступность']);
-  if (isAdmin()) t.push(['sched', 'График'], ['report', 'Отчёт']);
+  const t = [['cal', 'Календарь']];
+  if (isRun() || isAdmin()) t.push(['avail', 'Доступность']);
+  if (isAdmin()) t.push(['sched', 'График']);
+  t.push(['report', 'Отчёт'], ['event', 'Event']);
   return h('div', { class: 'top' }, t.map(x => h('button', { class: 'tab' + (ST.tab === x[0] ? ' on' : ''), onclick: () => setTab(x[0]) }, x[1])));
 }
 function brandHeader() {
@@ -275,14 +276,37 @@ function copyBlock(title, items) {
 
 async function listScreen(o) {
   const d = await call('list', { type: o.type, date: o.date, iid: o.iid });
+  const pending = new Map();          // pid -> новое значение, только отличающиеся от сохранённого
+  const hint = h('span', { class: 'hint grow' }, 'Изменений нет');
+  const saveBtn = btn('Сохранить', async () => {
+    const items = [...pending].map(([pid, value]) => ({ pid, value }));
+    saveBtn.disabled = true; saveBtn.style.opacity = '.5';
+    try {
+      await call('setVisitBatch', { type: o.type, date: o.date, iid: o.iid, items });
+      pending.clear();
+      toast('Сохранено: ' + items.length);
+      render();
+    } catch (e) {
+      saveBtn.disabled = false; saveBtn.style.opacity = '';
+      toast(e.message);
+    }
+  });
+  const refreshBar = () => {
+    const n = pending.size;
+    saveBtn.disabled = !n || !d.canMark; saveBtn.style.opacity = saveBtn.disabled ? '.5' : '';
+    hint.textContent = n ? 'Не сохранено изменений: ' + n : 'Изменений нет';
+  };
+  refreshBar();
   const out = [h('div', { class: 'pad' }, h('h2', {}, o.title), h('div', { class: 'hint' }, 'Участников: ' + d.items.length + (d.cancelled ? ' · тренировка отменена' : '')))];
+  if (d.canMark && d.items.length) out.push(h('div', { class: 'pad', style: 'display:flex;align-items:center;gap:10px' }, hint, saveBtn));
   if (d.items.length) out.push(copyBlock(o.title, d.items));
   d.items.forEach((p, i) => out.push(h('div', { class: 'row' },
     h('span', { class: 'hint', style: 'width:26px' }, i + 1),
     h('span', { class: 'grow click', onclick: () => go(() => cardScreen(p.pid)) }, (p.surname + ' ' + p.name).trim()),
-    h('input', { type: 'checkbox', checked: p.visited, disabled: !d.canMark, onchange: async ev => {
-      try { await call('setVisit', { type: o.type, date: o.date, iid: o.iid, pid: p.pid, value: ev.target.checked }); }
-      catch (e) { ev.target.checked = !ev.target.checked; toast(e.message); } } }))));
+    h('input', { type: 'checkbox', checked: p.visited, disabled: !d.canMark, onchange: ev => {
+      const v = ev.target.checked;
+      if (v === p.visited) pending.delete(p.pid); else pending.set(p.pid, v);
+      refreshBar(); } }))));
   if (!d.items.length) out.push(h('div', { class: 'pad hint' }, 'Пока никто не зарегистрировался.'));
   return out;
 }
