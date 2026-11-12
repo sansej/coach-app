@@ -291,13 +291,20 @@ async function listScreen(o) {
       toast(e.message);
     }
   });
+  const counter = h('div', { class: 'hint' }, '');
+  const updateCount = () => {
+    const present = d.items.filter(p => pending.has(p.pid) ? pending.get(p.pid) : p.visited).length;
+    counter.textContent = 'Участников: ' + d.items.length + ' · отмечено: ' + present + (d.cancelled ? ' · тренировка отменена' : '');
+  };
   const refreshBar = () => {
+    updateCount();
     const n = pending.size;
     saveBtn.disabled = !n || !d.canMark; saveBtn.style.opacity = saveBtn.disabled ? '.5' : '';
     hint.textContent = n ? 'Не сохранено изменений: ' + n : 'Изменений нет';
   };
   refreshBar();
-  const out = [h('div', { class: 'pad' }, h('h2', {}, o.title), h('div', { class: 'hint' }, 'Участников: ' + d.items.length + (d.cancelled ? ' · тренировка отменена' : '')))];
+  const out = [h('div', { class: 'pad' }, h('h2', {}, o.title), counter)];
+  updateCount();
   if (d.canMark && d.items.length) out.push(h('div', { class: 'pad', style: 'display:flex;align-items:center;gap:10px' }, hint, saveBtn));
   if (d.items.length) out.push(copyBlock(o.title, d.items));
   d.items.forEach((p, i) => out.push(h('div', { class: 'row' },
